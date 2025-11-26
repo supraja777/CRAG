@@ -5,6 +5,9 @@ A **PDF-based question answering system** using **Hypothetical Document Embeddin
 
 ---
 
+![alt text](image.jpg)
+
+
 ## Features
 
 * Load and preprocess PDF documents with `PyPDFLoader`.
