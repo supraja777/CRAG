@@ -1,5 +1,3 @@
----
-
 # 🧠 **CRAG Pipeline — Corrective Retrieval-Augmented Generation**
 
 ### *A Smarter, More Reliable Alternative to Traditional RAG*
