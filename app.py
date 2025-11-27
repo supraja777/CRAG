@@ -1,17 +1,16 @@
-import os
-from dotenv import load_dotenv
-import textwrap
-
+import json
+from langchain_groq import ChatGroq
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import PromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
+from pydantic import BaseModel, Field
+from langchain_community.tools import DuckDuckGoSearchRun
+from typing import List, Dict, Any, Tuple
 
-from langchain_community.chat_models import ChatHuggingFace
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-from langchain_groq import ChatGroq
-
+import os
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -48,73 +47,243 @@ def encode_pdf(path, chunk_size = 1000, chunk_overlap = 200):
     vectorstore = FAISS.from_documents(cleaned_texts, embeddings)
     return vectorstore
 
-def show_context(context):
-    """
-    Display the contents of the provided context list
-    """
+vectorstore = encode_pdf(path)
+llm = ChatGroq(model="llama-3.3-70b-versatile")
 
-    for i, c in enumerate(context):
-        print(f"Context {i + 1} : ")
-        print(c)
-        print("\n")
+search = DuckDuckGoSearchRun()
 
-def text_wrap(text, width=120):
+# Define Retrieval Evaluator, Knowledge Refinement and Query Rewriter LLM chains
+
+# Retrieval Evaluator
+
+class RetrievalEvaluatorInput(BaseModel):
+    relevance_score: float = Field(description="The relevance score of the document to the query. The score should be between 0 and 1")
+
+def retrieval_evaluator(query: str, document: str) -> float:
+    prompt = PromptTemplate(
+        input_variables = ["query", "document"],
+        template = """
+        On a scale from 0 to 1, how relevant is the following document to the query? 
+        Query: {query}
+        Document: {document}
+        Relevance score: 
+        """
+    )
+
+    chain = prompt | llm.with_structured_output(RetrievalEvaluatorInput)
+    input_variables = {"query" : query, "document": document}
+    result = chain.invoke(input_variables).relevance_score
+    return result
+
+class KnowledgeRefinementInput(BaseModel):
+    key_points: str = Field(description = "The document to extract key information from.")
+
+
+# Knowledge Refinement
+
+def knowledge_refinment(document: str) -> List[str]:
+    prompt = PromptTemplate(
+        input_variables = ["document"],
+        template = """ Extract the key information from the following in bullet points: \n 
+        {document}
+        key points: 
+        """
+    )
+
+    chain = prompt | llm.with_structured_output(KnowledgeRefinementInput)
+
+    input_variables = {"document" : document}
+
+    result = chain.invoke(input_variables).key_points
+
+    return [point.strip() for point in result.split('\n') if point.strip()]
+
+
+# Web Search Query Rewriter
+
+class QueryRewriterInput(BaseModel):
+    query: str = Field(description = "The query to rewrite")
+
+def rewrite_query(query: str) -> str:
+    prompt = PromptTemplate(
+        input_variables = ["query"],
+        template = """Rewrite the following query to make it more suitable for a web search: 
+        {query} rewritten query: 
+        """
+    )
+
+    chain = prompt | llm.with_structured_output(QueryRewriterInput)
+    input_variables = {"query" : query}
+    return chain.invoke(input_variables).query.strip()
+
+def parse_search_results(results_string: str) -> List[Tuple[str, str]]:
+    try:
+        # Attempt to parse json string
+        results = json.loads(results_string)
+
+        # Extract and return the title and link from each result
+        return [(result.get('title', 'Untitled'), result.get('link', '')) for result in results]
+    except json.JSONDecodeError:
+        # Handle JSON decoding errors by returning an empty list
+        print("Error parsing search results. Returning empty list")
+        return []
+    
+
+def retrieve_documents(query: str, faiss_index: FAISS, k: int = 3) -> List[str]:
     """
-    Wraps the input text to the specified width.
+    Retrieve documents based on a query using a FAISS index.
 
     Args:
-        text (str): The input text to wrap.
-        width (int): The width at which to wrap the text.
+        query (str): The query string to search for.
+        faiss_index (FAISS): The FAISS index used for similarity search.
+        k (int): The number of top documents to retrieve. Defaults to 3.
 
     Returns:
-        str: The wrapped text.
+        List[str]: A list of the retrieved document contents.
     """
-    return textwrap.fill(text, width=width)
 
-# Define HyDe retriever class - creating vector store, generating hypothetical document and retrieving
+    docs = faiss_index.similarity_search(query, k = k)
+    return [doc.page_content for doc in docs]
 
-class HyDERetriever:
-    def __init__(self, files_path, chunk_size = 500, chunk_overlap = 100):
-       
-        self.llm = llm = ChatGroq(
-            model="llama-3.3-70b-versatile"   
-        )
-        self.embeddings = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-MiniLm-L6-v2")
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.vectorstore = encode_pdf(files_path, chunk_size = self.chunk_size, chunk_overlap = self.chunk_overlap)
+def evaluate_documents(query: str, documents: List[str]) -> List[float]:
+    """
+    Evaluate the relevance of documents based on a query.
 
-        self.hyde_prompt = PromptTemplate(
-            input_variables = ["query", "chunk_size"],
-            template = """
-            Given the question {query}, generate a hypothetical document that directly answers this question. 
+    Args:
+        query (str): The query string.
+        documents (List[str]): A list of document contents to evaluate.
 
-            The document should be detailed and in-depth. The document should have exactly {chunk_size} characters."""
-        )
+    Returns:
+        List[float]: A list of relevance scores for each document.
+    """
 
-        self.hyde_chain = self.hyde_prompt | self.llm
+    return [retrieval_evaluator(query, doc) for doc in documents]
 
-    def generate_hypothetical_document(self, query):
-        input_variables = {"query" : query, "chunk_size" : self.chunk_size}
-        return self.hyde_chain.invoke(input_variables).content
+def perform_web_search(query: str) -> Tuple[List[str], List[Tuple[str, str]]]:
+    """
+    Perform a web search based on a query.
+
+    Args:
+        query (str): The query string to search for.
+
+    Returns:
+        Tuple[List[str], List[Tuple[str, str]]]: 
+            - A list of refined knowledge obtained from the web search.
+            - A list of tuples containing titles and links of the sources.
+    """
+
+    rewritten_query = rewrite_query(query)
+    web_results = search.run(rewritten_query)
+    web_knowledge = knowledge_refinment(web_results)
+    sources = parse_search_results(web_results)
+    return web_knowledge, sources
+
+def generate_response(query: str, knowledge: str, sources: List[Tuple[str, str]]) -> str:
+    """
+    Generate a response to a query using knowledge and sources.
+
+    Args:
+        query (str): The query string.
+        knowledge (str): The refined knowledge to use in the response.
+        sources (List[Tuple[str, str]]): A list of tuples containing titles and links of the sources.
+
+    Returns:
+        str: The generated response.
+    """
+
+    response_prompt = PromptTemplate(
+        input_variables = ["query", "knowledge", "sources"],
+        template = "Based on the following knowledge, " \
+        "answer the query. Include the sources with their links (if available)" \
+        "at the end of your answer : Query : {query} " \
+        "Knowledge: {knowledge}" \
+        "Sources: {sources}" \
+        "Answer: "
+    )
+
+    input_variables = {
+        "query": query,
+        "knowledge": knowledge,
+        "sources": "\n".join([f"{title}: {link}" if link else title for title, link in sources])
+    }
+
+    response_chain = response_prompt | llm
+    return response_chain.invoke(input_variables).content
+
+
+
+# CRAG Process
+
+def crag_process(query: str, faiss_index: FAISS) -> str:
+    """
+    Process a query by retrieving, evaluating, and using documents or performing a web search to generate a response.
+
+    Args:
+        query (str): The query string to process.
+        faiss_index (FAISS): The FAISS index used for document retrieval.
+
+    Returns:
+        str: The generated response based on the query.
+    """
+    print(f"Processing query : {query}")
+
+    # Retrieve and Evaluate documents
+    retrieved_docs = retrieve_documents(query, faiss_index)
+    eval_scores = evaluate_documents(query, retrieved_docs)
+
+    print(f"\nRetrieved {len(retrieved_docs)} documents")
+    print(f"Evaluation scores: {eval_scores}")
+
+    max_score = max(eval_scores)
+    sources = []
+
+    if max_score > 0.7:
+        print("Action: Correct - Using retrieved documents")
+        best_doc = retrieved_docs[eval_scores.index(max_score)]
+        final_knowledge = best_doc
+        sources.append(("Retrieved document", ""))
+    elif max_score < 0.3:
+        print("Action: Incorrect - Performing web search")
+        final_knowledge, sources = perform_web_search(query)
+    else:
+        print("Action: Ambiguous - Combining retrieved document and web search")
+        best_doc = retrieved_docs[eval_scores.index(max_score)]
+        retrieved_knowledge = knowledge_refinment(best_doc)
+        web_knowledge, web_sources = perform_web_search(query)
+        final_knowledge = "\n".join(retrieved_knowledge + web_knowledge)
+        sources = [("Retrieved document", "")] + web_sources
+
+    print("Final Knowledge : ")
+    print(final_knowledge)
+
+    print("\n sources: ")
+    for title, link in sources:
+        print(f"{title} : {link}" if link else title)
     
-    def retrieve(self, query, k = 3):
-        hypothetical_doc = self.generate_hypothetical_document(query)
-        similar_docs = self.vectorstore.similarity_search(hypothetical_doc, k = k)
-        return similar_docs, hypothetical_doc
+    # Generate response
+    print("\n Generating response .......")
+    response = generate_response(query, final_knowledge, sources)
+
+    print("\nResponse generated")
+    return response
+
+query = "What are the main causes of climate changes?"
+result = crag_process(query, vectorstore)
+print(f"Query: {query}")
+print(f"Answer {result}")
+
+
+query = "how did harry beat quirrell?"
+result = crag_process(query, vectorstore)
+print(f"Query: {query}")
+print(f"Answer {result}")
+
+
+
+
+
+
+
+
+
     
-retriever = HyDERetriever(path)
-
-test_query = "What is the main cause of climate change?"
-
-results, hypothetical_doc = retriever.retrieve(test_query)
-
-docs_content = [doc.page_content for doc in results]
-
-print("Hypothetical doc \n")
-
-print(text_wrap(hypothetical_doc) + "\n")
-show_context(docs_content)
-
-
-

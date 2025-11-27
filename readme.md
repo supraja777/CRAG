@@ -1,162 +1,280 @@
+---
 
-# HyDE-PDF-Retriever
+# 🧠 **CRAG Pipeline — Corrective Retrieval-Augmented Generation**
 
-A **PDF-based question answering system** using **Hypothetical Document Embeddings (HyDE)**, HuggingFace embeddings, and Groq-powered LLMs. This project allows you to query PDF documents, generate a hypothetical document answering your question, and retrieve the most relevant sections from your PDFs.
+### *A Smarter, More Reliable Alternative to Traditional RAG*
+
+Retrieval-Augmented Generation (RAG) is widely used to enhance LLMs with external knowledge. However, **traditional RAG suffers from a major flaw**:
+
+### ❌ **It blindly trusts retrieved documents—even when they are irrelevant.**
+
+This leads to:
+
+* Hallucinations
+* Incorrect answers
+* Over-reliance on possibly wrong retrieved chunks
+* Poor performance on out-of-domain questions
+
+To overcome this behavior, researchers introduced **CRAG — Corrective RAG**.
 
 ---
 
-![alt text](image.jpg)
+# 🚀 **What is CRAG?**
 
+**CRAG (Corrective Retrieval-Augmented Generation)** is an improved retrieval pipeline designed to:
 
-## Features
+### ✔️ Validate retrieved documents
 
-* Load and preprocess PDF documents with `PyPDFLoader`.
-* Split PDF content into chunks with `RecursiveCharacterTextSplitter`.
-* Clean text by replacing tabs with spaces.
-* Generate embeddings using **HuggingFace sentence transformers**.
-* Create a **FAISS vector store** for efficient similarity search.
-* Generate a **hypothetical document** answering user queries using Groq LLMs (`ChatGroq`).
-* Retrieve the most relevant PDF sections based on the generated document.
+### ✔️ Detect incorrect retrieval
 
----
+### ✔️ Trigger fallback actions
 
-## Tech Stack
+### ✔️ Combine multiple knowledge channels
 
-* **Python 3.11+**
-* **LangChain** (Community + Core modules)
-* **HuggingFace Transformers & Embeddings**
-* **FAISS** (Vector store for fast similarity search)
-* **Groq LLM** (`ChatGroq`)
-* **dotenv** (Environment variable management)
+### ✔️ Reduce hallucinations by forcing corrective behavior
 
----
+In CRAG, retrieval is followed by a **relevance evaluation step**. Based on this score:
 
-## Installation
+| Relevance Score      | Action                                       |
+| -------------------- | -------------------------------------------- |
+| **High (> 0.7)**     | Use the retrieved document                   |
+| **Low (< 0.3)**      | Discard retrieval → switch to web search     |
+| **Medium (0.3–0.7)** | Hybrid mode → combine retrieval + web search |
 
-1. Clone the repository:
-
-```bash
-git clone https://github.com/yourusername/HyDE-PDF-Retriever.git
-cd HyDE-PDF-Retriever
-```
-
-2. Create and activate a virtual environment:
-
-```bash
-python -m venv env
-source env/bin/activate   # Linux/macOS
-env\Scripts\activate      # Windows
-```
-
-3. Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-4. Add your `.env` file for API keys and configuration:
-
-```
-# Example .env
-GROQ_API_KEY=your_groq_api_key
-```
+This makes CRAG far more robust and accurate.
 
 ---
 
-## Usage
+# 🆚 **CRAG vs Traditional RAG**
 
-1. Place your PDF file in the `data/` folder. Example:
+## 🟦 **Traditional RAG**
+
+* Retrieves top-k chunks
+* Feeds them blindly to the LLM
+* Assumes retrieval is always correct
+
+**Problems:**
+
+* If retrieval is irrelevant → LLM produces wrong answers
+* Cannot handle out-of-scope queries
+* Does not adapt dynamically
+* High hallucination risk
+
+---
+
+## 🟩 **CRAG — Corrective RAG**
+
+CRAG introduces a **corrective decision layer**, making it:
+
+### ⭐ **More Accurate**
+
+Irrelevant chunks are filtered via an LLM evaluator.
+
+### ⭐ **More Adaptive**
+
+If documents are irrelevant → it switches to **web search**.
+
+### ⭐ **More Reliable**
+
+Hybrid mode ensures a balanced mix of local + online knowledge.
+
+### ⭐ **Less Hallucinatory**
+
+Only high-confidence knowledge is allowed into final generation.
+
+---
+
+# 📊 **Pipeline Overview (CRAG Architecture)**
+
+```
+          ┌─────────────────────────┐
+          │        User Query        │
+          └─────────────┬───────────┘
+                        ↓
+              ┌──────────────────┐
+              │ Retrieve Top-k    │
+              │ (FAISS Vector DB) │
+              └─────────┬────────┘
+                        ↓
+      ┌────────────────────────────────┐
+      │ LLM-based Relevance Evaluator  │
+      └─────────┬───────────┬────────┘
+                │           │
+     High Score │           │ Low Score
+    (> 0.7)     │           │ (< 0.3)
+                ↓           ↓
+     Use PDF Doc│     Perform Web Search
+         ↓       │           ↓
+     ┌──────────────┐   ┌───────────────┐
+     │ Knowledge     │   │ Web Knowledge │
+     │ Refinement    │   │ Refinement    │
+     └──────┬────────┘   └───────┬──────┘
+            │                    │
+            └────────┬───────────┘
+                     ↓
+          ┌──────────────────────────┐
+          │   Response Generation    │
+          └──────────────────────────┘
+```
+
+---
+
+# 🧩 **Advantages of CRAG**
+
+### 🟢 **1. High Accuracy**
+
+Irrelevant chunks are filtered out before reaching the LLM.
+
+### 🟢 **2. Scalable & Domain-Agnostic**
+
+Works for:
+
+* LLM apps
+* PDF QA
+* Web-assisted question answering
+* Hybrid knowledge systems
+
+### 🟢 **3. Reduced Hallucinations**
+
+CRAG only uses **validated** or **trusted** knowledge.
+
+### 🟢 **4. Fallback Mechanism**
+
+If retrieval fails → automatic web search.
+
+### 🟢 **5. Hybrid Reasoning**
+
+CRAG combines:
+
+* Vector DB knowledge
+* Web knowledge
+* LLM reasoning
+
+…based on confidence.
+
+### 🟢 **6. Better handling of out-of-domain queries**
+
+Traditional RAG fails when query ≠ document domain.
+CRAG performs a **dynamic correction**.
+
+---
+
+# 🧠 **CRAG Implementation**
+
+
+✔ **PDF processing** with LangChain
+✔ **Text splitting** (RecursiveCharacterSplitter)
+✔ **Embeddings** (HuggingFace MiniLM)
+✔ **FAISS Vectorstore**
+✔ **Groq Llama 3.3 70B LLM**
+✔ **Relevance scoring using structured output**
+✔ **Knowledge refinement**
+✔ **Query rewriting for web search**
+✔ **Fallback logic**
+✔ **Final answer generation with sources**
+
+Below is a breakdown for each stage:
+
+---
+
+## 📥 1. **PDF Encoding**
+
+* Load PDF using `PyPDFLoader`
+* Split into chunks
+* Remove weird tab characters
+* Convert to embeddings using `all-MiniLM-L6-v2`
+* Store vectors in FAISS
+
+---
+
+## 🔍 2. **Document Retrieval**
+
+```
+docs = faiss_index.similarity_search(query, k=3)
+```
+
+Retrieves top-k based on cosine similarity.
+
+---
+
+## 🧪 3. **Evaluation (CRAG Correction Layer)**
+
+The evaluator uses:
 
 ```python
-path = "data/Understanding_Climate_Change.pdf"
+class RetrievalEvaluatorInput(BaseModel):
+    relevance_score: float
 ```
 
-2. Initialize the HyDE retriever:
-
-```python
-from hyde_retriever import HyDERetriever
-
-retriever = HyDERetriever(path)
-```
-
-3. Query your PDF and get relevant content:
-
-```python
-test_query = "What is the main cause of climate change?"
-results, hypothetical_doc = retriever.retrieve(test_query)
-
-# Display results
-print("Hypothetical doc:\n", hypothetical_doc)
-for i, doc in enumerate(results):
-    print(f"Context {i+1}:\n", doc.page_content)
-```
+LLM decides a score between **0 and 1**.
 
 ---
 
-## How It Works
+## 🔄 4. **Decision Logic**
 
-1. **PDF Loading & Splitting:**
-   PDF content is loaded using `PyPDFLoader` and split into manageable chunks.
+### If **score > 0.7**
 
-2. **Text Cleaning:**
-   Tabs (`\t`) are replaced with spaces for clean processing.
+→ Use retrieved document
 
-3. **Embedding Creation:**
-   Each chunk is embedded using **HuggingFace's MiniLM-L6-v2** model.
+### If **score < 0.3**
 
-4. **Vector Store:**
-   Chunks are indexed in **FAISS** for fast similarity search.
+→ Web search (DuckDuckGo)
 
-5. **HyDE Hypothetical Document Generation:**
+### If **0.3–0.7**
 
-   * Given a query, the system generates a detailed hypothetical document using `ChatGroq`.
-   * This hypothetical document is then used to search for the most relevant sections in the PDF.
+→ Combine retrieval + web search
 
-6. **Retrieval:**
-   Returns both the hypothetical answer and the top-K most relevant PDF chunks.
+This is the **core of CRAG**.
 
 ---
 
-## Example Output
+## 📝 5. **Knowledge Refinement**
 
-**Query:** `"What is the main cause of climate change?"`
-
-**Hypothetical Document:**
-
-```
-[Text of the generated document, wrapped at 120 characters]
-```
-
-**Top 3 Relevant Sections from PDF:**
-
-```
-Context 1: ...
-Context 2: ...
-Context 3: ...
-```
+Extracts bullet-point knowledge from documents or search results.
 
 ---
 
-## Folder Structure
+## 🌐 6. **Web Search + Query Rewriting**
 
-```
-HyDE-PDF-Retriever/
-│
-├─ data/                    # PDF files
-├─ hyde_retriever.py        # Main code
-├─ requirements.txt
-├─ README.md
-└─ .env                     # Environment variables
-```
+If retrieval fails:
+
+* Query → rewritten for search
+* DuckDuckGo returns results
+* Key information extracted
 
 ---
 
-## Future Improvements
+## 🧾 7. **Final Answer Generation**
 
-* Support multiple PDF inputs and batch queries.
-* Add GUI with **Streamlit** for interactive querying.
-* Allow customizable embedding models and LLMs.
-* Include caching for faster repeated queries.
+Adds:
+
+* context
+* reasoning
+* sources with links
 
 ---
 
+# 🧪 **Sample Output (From Your Run)**
+
+Your pipeline correctly detected:
+
+### Query 1: *"What are the main causes of climate change?"*
+
+* Retrieved documents relevant (score 0.8)
+  → Uses PDF-based knowledge.
+
+### Query 2: *"How did Harry beat Quirrell?"*
+
+* Retrieval totally irrelevant (score 0.0)
+  → CRAG switched to **web search**.
+  → Extracted relevant story info.
+
+This demonstrates CRAG working exactly as intended.
+
+---
+
+# 🏁 **Conclusion**
+
+CRAG is a **superior evolution of RAG**, designed for reliability, correctness, and adaptive knowledge retrieval.
+
+---
